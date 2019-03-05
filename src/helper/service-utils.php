@@ -214,6 +214,29 @@ function generate_global_docker_compose_yml( Filesystem $fs ) {
 		],
 	];
 
+	$volumes_logrotate = [
+		[
+			'name'            => 'logrotate_conf',
+			'path_to_symlink' => EE_SERVICE_DIR . '/logrotate/conf',
+			'container_path'  => '/etc/logrotate.d',
+			'skip_darwin'     => true,
+		],
+		[
+			'name'            => '/opt/easyengine/logs',
+			'path_to_symlink' => '/opt/easyengine/logs',
+			'container_path'  => '/opt/easyengine/logs',
+			'skip_volume'     => true,
+			'skip_darwin'     => true,
+		],
+		[
+			'name'            => '/var/lib/docker/volumes',
+			'path_to_symlink' => '/var/lib/docker/volumes',
+			'container_path'  => '/var/lib/docker/volumes',
+			'skip_volume'     => true,
+			'skip_darwin'     => true,
+		],
+	];
+
 	if ( ! IS_DARWIN ) {
 
 		$data['created_volumes'] = [
@@ -232,6 +255,7 @@ function generate_global_docker_compose_yml( Filesystem $fs ) {
 				[ 'prefix' => GLOBAL_REDIS, 'ext_vol_name' => 'redis_conf' ],
 				[ 'prefix' => GLOBAL_REDIS, 'ext_vol_name' => 'redis_logs' ],
 				[ 'prefix' => GLOBAL_NEWRELIC_DAEMON, 'ext_vol_name' => 'newrelic_sock' ],
+				[ 'prefix' => GLOBAL_LOGROTATE, 'ext_vol_name' => 'logrotate_conf' ],
 			],
 		];
 
@@ -249,6 +273,10 @@ function generate_global_docker_compose_yml( Filesystem $fs ) {
 
 		if ( empty( \EE_DOCKER::get_volumes_by_label( GLOBAL_NEWRELIC_DAEMON ) ) ) {
 			\EE_DOCKER::create_volumes( GLOBAL_NEWRELIC_DAEMON, $volumes_newrelic, false );
+		}
+
+		if ( empty( \EE_DOCKER::get_volumes_by_label( GLOBAL_LOGROTATE ) ) ) {
+			\EE_DOCKER::create_volumes( GLOBAL_LOGROTATE, $volumes_logrotate, false );
 		}
 	}
 
@@ -298,6 +326,15 @@ function generate_global_docker_compose_yml( Filesystem $fs ) {
 			'image'    => 'easyengine/newrelic-daemon:' . $img_versions['easyengine/newrelic-daemon'],
 			'restart'  => 'always',
 			'volumes'  => \EE_DOCKER::get_mounting_volume_array( $volumes_newrelic ),
+			'networks' => [
+				'global-backend-network',
+			],
+		],
+		[
+			'name'     => GLOBAL_LOGROTATE,
+			'image'    => 'easyengine/logrotate:' . $img_versions['easyengine/logrotate'],
+			'restart'  => 'always',
+			'volumes'  => \EE_DOCKER::get_mounting_volume_array( $volumes_logrotate ),
 			'networks' => [
 				'global-backend-network',
 			],

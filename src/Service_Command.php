@@ -22,6 +22,7 @@ class Service_Command extends EE_Command {
 		'db',
 		'redis',
 		'newrelic-daemon',
+		'logrotate',
 	];
 
 	/**

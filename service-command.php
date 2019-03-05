@@ -32,6 +32,10 @@ if ( ! defined( 'GLOBAL_NEWRELIC_DAEMON' ) ) {
 	define( 'GLOBAL_NEWRELIC_DAEMON', 'global-newrelic-daemon' );
 }
 
+if ( ! defined( 'GLOBAL_LOGROTATE' ) ) {
+	define( 'GLOBAL_LOGROTATE', 'global-logrotate' );
+}
+
 if ( ! class_exists( 'EE' ) ) {
 	return;
 }
