@@ -214,4 +214,24 @@ class Service_Command extends EE_Command {
 
 		return array_key_exists( $service, $command_map ) ? $command_map[ $service ] : false;
 	}
+
+	/**
+	 * Testing.
+	 */
+	public function test( $args, $assoc_args ) {
+		var_dump(\EE\Service\Utils\update_packages());
+
+		$this->install_fail2ban();
+		$this->install_logrotate();
+	}
+
+	private function install_fail2ban() {
+
+		return \EE\Service\Utils\install_package( 'fail2ban' );
+	}
+
+	private function install_logrotate() {
+
+		return \EE\Service\Utils\install_package( 'logrotate' );
+	}
 }

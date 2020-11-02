@@ -332,3 +332,48 @@ function set_nginx_proxy_version_conf() {
 		EE::exec( 'docker-compose exec global-nginx-proxy bash -c "nginx -t && nginx -s reload"' );
 	}
 }
+
+/**
+ * Function to check host distro.
+ */
+function is_distro_debian_based() {
+
+	if ( ! EE::exec( 'command -v lsb_release' ) && ! EE::exec( 'command -v apt' ) ) {
+		return false;
+	}
+
+	$distro = EE::launch( 'lsb_release -i' );
+
+	if ( $distro->return_code > 0 ) {
+		return false;
+	}
+
+	$split = explode( ':', $distro->stdout );
+	$name = strtolower( trim( end( $split ) ) );
+
+	if ( 'ubuntu' === $name || 'debian' === $name ) {
+		return true;
+	}
+
+	return false;
+}
+
+function update_packages() {
+
+	if ( ! EE::exec( 'command -v apt' ) ) {
+		return false;
+	}
+
+	return EE::exec( 'apt update' );
+}
+
+
+function install_package( $package_name ) {
+
+	if ( ! EE::exec( "command -v $package_name" ) ) {
+		\EE\Service\Utils\update_packages();
+		return EE::exec( "apt install -y $package_name" );
+	}
+
+	return true;
+}
