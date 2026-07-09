@@ -227,7 +227,13 @@ class DisableGlobalDbBinlogs extends Base {
 			return [];
 		}
 
-		return array_filter( glob( $log_dir . '/mariadb-bin.*' ), function ( $path ) {
+		$binlog_files = glob( $log_dir . '/mariadb-bin.*' );
+
+		if ( false === $binlog_files ) {
+			return [];
+		}
+
+		return array_filter( $binlog_files, function ( $path ) {
 			return 1 === preg_match( '/^mariadb-bin\.(index|[0-9]+)$/', basename( $path ) );
 		} );
 	}
