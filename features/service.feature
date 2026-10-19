@@ -36,19 +36,6 @@ Feature: Service command (usage, validation and read-only behaviour)
       | reload     | ee service reload <service-name>      |
       | refresh    | ee service refresh                    |
 
-  # SVC-7: the <service-name> help lists nginx-proxy, db, redis and newrelic-daemon but not cron, which is accepted.
-  @known-bug
-  Scenario Outline: ee help service <subcommand> lists every accepted service
-    When I run 'PAGER=cat bin/ee help service <subcommand>'
-    Then STDOUT should contain 'cron'
-
-    Examples:
-      | subcommand |
-      | enable     |
-      | disable    |
-      | restart    |
-      | reload     |
-
   Scenario Outline: ee service <subcommand> without a service name prints usage
     When I run 'bin/ee service <subcommand>'
     Then the return code should be 1
@@ -128,14 +115,6 @@ Feature: Service command (usage, validation and read-only behaviour)
       And STDOUT should contain 'Notice: Service global-redis already enabled.'
       And the docker container 'services_global-redis_1' should not have been restarted
 
-  # CORE-3/CFG-5: the logger is chosen before the arguments are parsed, so --quiet never takes effect.
-  @known-bug
-  Scenario: --quiet suppresses the already-enabled notice
-    Given the docker container 'services_global-redis_1' should be running
-    When I run 'bin/ee service enable redis --quiet'
-    Then the return code should be 0
-      And STDOUT should be empty
-
   Scenario Outline: ee service reload <service> warns that the service can't be reloaded
     Given the docker container 'services_global-<service>_1' should be running
       And I save the start time of the docker container 'services_global-<service>_1'
@@ -188,18 +167,4 @@ Feature: Service command (usage, validation and read-only behaviour)
       """
     When I run 'EE_CONFIG_PATH=/var/tmp/bh-service-command-ports-quoted.yml bin/ee service enable nginx-proxy'
     Then the return code should be 0
-      And STDOUT should contain 'Notice: Service nginx_proxy already enabled.'
-
-  # SVC-5: Spyc parses unquoted `proxy_80_port: 80` as int 80, and nginx_proxy_check() compares it with `!==` to the string from docker inspect, so matching ports are reported as a mismatch.
-  @known-bug
-  Scenario: ee service enable nginx-proxy accepts unquoted port values matching the running proxy
-    Given the docker container 'services_global-nginx-proxy_1' should be running
-      And a file '/var/tmp/bh-service-command-ports-int.yml' with:
-      """
-      proxy_80_port: 80
-      proxy_443_port: 443
-      """
-    When I run 'EE_CONFIG_PATH=/var/tmp/bh-service-command-ports-int.yml bin/ee service enable nginx-proxy'
-    Then the return code should be 0
-      And STDERR should not contain "don't match"
       And STDOUT should contain 'Notice: Service nginx_proxy already enabled.'

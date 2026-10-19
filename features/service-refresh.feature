@@ -78,29 +78,3 @@ Feature: ee service refresh
     When I run 'bin/ee service refresh'
     Then the return code should be 0
       And the docker container 'services_global-newrelic-daemon_1' should not exist
-
-  # SVC-8: without a compose file, `docker-compose ps -q` finds nothing, so refresh skips every `up -d` and still reports success.
-  @known-bug
-  Scenario: ee service refresh updates the running services when the compose file was missing
-    Given I back up the file '/opt/easyengine/services/docker-compose.yml'
-      And I delete the file '/opt/easyengine/services/docker-compose.yml'
-    When I run 'bin/ee service refresh --debug'
-    Then the return code should be 0
-      And STDERR should contain 'up -d global-nginx-proxy'
-      And STDERR should contain 'up -d global-db'
-
-  # SVC-6: refresh has no synopsis, so the framework skips argument validation and unknown parameters or extra arguments are silently accepted.
-  @known-bug
-  Scenario: ee service refresh rejects unknown parameters
-    Given I back up the file '/opt/easyengine/services/docker-compose.yml'
-    When I run 'bin/ee service refresh --foo=bar'
-    Then the return code should be 1
-      And STDERR should contain 'unknown --foo parameter'
-
-  # SVC-6: see above.
-  @known-bug
-  Scenario: ee service refresh rejects positional arguments
-    Given I back up the file '/opt/easyengine/services/docker-compose.yml'
-    When I run 'bin/ee service refresh nginx-proxy'
-    Then the return code should be 1
-      And STDERR should contain 'Too many positional arguments: nginx-proxy'

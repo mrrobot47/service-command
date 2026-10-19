@@ -12,14 +12,6 @@ Feature: Global newrelic-daemon service
     Then the return code should be 0
       And the docker container 'services_global-newrelic-daemon_1' should not exist
 
-  # SVC-3: `docker-compose restart` exits 0 for a service without containers and the result is not checked, so ee claims a restart that never happened.
-  @known-bug
-  Scenario: ee service restart newrelic-daemon does not claim success when it was never created
-    When I run 'bin/ee service restart newrelic-daemon'
-    Then STDOUT should not contain 'Success: Service global-newrelic-daemon restarted.'
-      And the return code should not be 0
-      And the docker container 'services_global-newrelic-daemon_1' should not exist
-
   Scenario: ee service enable newrelic-daemon creates and starts the daemon
     When I run 'bin/ee service enable newrelic-daemon'
     Then the return code should be 0

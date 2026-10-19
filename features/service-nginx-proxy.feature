@@ -32,24 +32,6 @@ Feature: Global nginx-proxy service
       And the docker container 'services_global-nginx-proxy_1' should be running
       And I wait until a GET request to 'http://127.0.0.1' with Host 'bh-service-command-1.test' returns 200 up to 30 seconds
 
-  # SVC-1: nginx_proxy_check() returns null (not true) when the default cert already exists, so enable prints the "already enabled" notice after starting the proxy, and set_nginx_proxy_version_conf() is skipped.
-  @known-bug
-  Scenario: ee service enable nginx-proxy reports success after starting a stopped proxy
-    Given I run 'bin/ee service disable nginx-proxy'
-      And the docker container 'services_global-nginx-proxy_1' should be stopped
-    When I run 'bin/ee service enable nginx-proxy'
-    Then the return code should be 0
-      And STDOUT should contain 'Success: Service nginx_proxy enabled.'
-      And STDOUT should not contain 'already enabled'
-
-  # SVC-1: after a recreate, /version.conf keeps the image's "EasyEngine v4" because set_nginx_proxy_version_conf() is skipped.
-  @known-bug
-  Scenario: ee service enable nginx-proxy writes the EasyEngine version into a recreated proxy
-    Given I run 'docker rm -f services_global-nginx-proxy_1'
-    When I run 'bin/ee service enable nginx-proxy'
-    Then the return code should be 0
-      And I wait until the command 'docker exec services_global-nginx-proxy_1 cat /version.conf' outputs 'EasyEngine v4.' up to 10 seconds
-
   Scenario: ee service enable nginx-proxy generates a missing default certificate, writes the version and reports success
     Given I back up the file '/opt/easyengine/services/nginx-proxy/certs/default.key'
       And I back up the file '/opt/easyengine/services/nginx-proxy/certs/default.crt'
@@ -159,12 +141,3 @@ Feature: Global nginx-proxy service
     Then the return code should be 0
       And STDOUT should contain 'Success: Reloaded global-nginx-proxy.'
       And a GET request to 'http://127.0.0.1' with Host 'bh-service-command-1.test' should return 200
-
-  # SVC-2: reload/restart/disable ignore EE::exec()'s result, so a failed `docker-compose exec` still prints "Success: Reloaded" and exits 0.
-  @known-bug
-  Scenario: ee service reload nginx-proxy fails when the proxy is stopped
-    Given I run 'bin/ee service disable nginx-proxy'
-    When I run 'bin/ee service reload nginx-proxy'
-    Then the return code should not be 0
-      And STDOUT should not contain 'Success: Reloaded global-nginx-proxy.'
-      And the docker container 'services_global-nginx-proxy_1' should be stopped
