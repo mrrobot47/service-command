@@ -433,10 +433,17 @@ class FeatureContext implements Context
 	 */
 	public static function cleanup(AfterFeatureScope $scope)
 	{
+		$failed = [];
 		foreach ( self::listSites() as $site ) {
 			if ( 0 === strpos( $site, self::$site_prefix ) ) {
-				EE::launch( 'bin/ee site delete ' . escapeshellarg( $site ) . ' --yes', false, true );
+				$result = EE::launch( 'bin/ee site delete ' . escapeshellarg( $site ) . ' --yes', false, true );
+				if ( 0 !== $result->return_code ) {
+					$failed[] = "$site: " . trim( $result->stderr );
+				}
 			}
+		}
+		if ( $failed ) {
+			throw new Exception( "Deleting the suite's sites failed:\n" . implode( "\n", $failed ) );
 		}
 	}
 
@@ -1242,8 +1249,10 @@ class FeatureContext implements Context
 
 	private function restoreBackedUpFiles() {
 		foreach ( array_reverse( array_keys( $this->file_backups ) ) as $path ) {
-			if ( 0 === strpos( $path, EE_ROOT_DIR . '/services/nginx-proxy/' ) ) {
+			// Journaled before the backup entries go, so a failed reload is retried by the next run.
+			if ( ! $this->reload_proxy && 0 === strpos( $path, EE_ROOT_DIR . '/services/nginx-proxy/' ) ) {
 				$this->reload_proxy = true;
+				$this->saveState();
 			}
 			$this->iRestoreTheFile( $path );
 		}
@@ -1322,7 +1331,7 @@ class FeatureContext implements Context
 	 */
 	private function saveState() {
 		$file = self::STATE_DIR . '/state.json';
-		if ( empty( $this->file_backups ) && empty( $this->created_files ) && null === $this->service_snapshot ) {
+		if ( empty( $this->file_backups ) && empty( $this->created_files ) && null === $this->service_snapshot && ! $this->reload_proxy ) {
 			if ( file_exists( $file ) ) {
 				unlink( $file );
 			}
@@ -1334,6 +1343,7 @@ class FeatureContext implements Context
 			'files'    => $this->file_backups,
 			'created'  => $this->created_files,
 			'services' => $this->service_snapshot,
+			'reload'   => $this->reload_proxy,
 		];
 		// Atomic replace, so a killed run never leaves a truncated journal.
 		$tmp = $file . '.tmp';
@@ -1355,5 +1365,6 @@ class FeatureContext implements Context
 		$this->file_backups     = isset( $state['files'] ) ? (array) $state['files'] : [];
 		$this->created_files    = isset( $state['created'] ) ? (array) $state['created'] : [];
 		$this->service_snapshot = isset( $state['services'] ) ? $state['services'] : null;
+		$this->reload_proxy     = ! empty( $state['reload'] );
 	}
 }

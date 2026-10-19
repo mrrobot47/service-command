@@ -91,7 +91,9 @@ Feature: Service command (usage, validation and read-only behaviour)
       | reload     |
 
   Scenario Outline: ee service enable <service> is a no-op when the service is already running
-    Given the docker container '<container>' should be running
+    # enable regenerates a missing global docker-compose.yml, so these read-only scenarios refuse that state.
+    Given the file '/opt/easyengine/services/docker-compose.yml' should exist
+      And the docker container '<container>' should be running
       And I save the start time of the docker container '<container>'
     When I run 'bin/ee service enable <service>'
     Then the return code should be 0
@@ -107,7 +109,8 @@ Feature: Service command (usage, validation and read-only behaviour)
       | redis       | services_global-redis_1       | Notice: Service global-redis already enabled. |
 
   Scenario: ee service enable twice in a row stays a no-op
-    Given the docker container 'services_global-redis_1' should be running
+    Given the file '/opt/easyengine/services/docker-compose.yml' should exist
+      And the docker container 'services_global-redis_1' should be running
       And I save the start time of the docker container 'services_global-redis_1'
     When I run 'bin/ee service enable redis'
       And I run 'bin/ee service enable redis'
@@ -116,7 +119,8 @@ Feature: Service command (usage, validation and read-only behaviour)
       And the docker container 'services_global-redis_1' should not have been restarted
 
   Scenario Outline: ee service reload <service> warns that the service can't be reloaded
-    Given the docker container 'services_global-<service>_1' should be running
+    Given the file '/opt/easyengine/services/docker-compose.yml' should exist
+      And the docker container 'services_global-<service>_1' should be running
       And I save the start time of the docker container 'services_global-<service>_1'
     When I run 'bin/ee service reload <service>'
     Then the return code should be 0
@@ -140,7 +144,8 @@ Feature: Service command (usage, validation and read-only behaviour)
       | newrelic-daemon |
 
   Scenario Outline: ee service enable nginx-proxy refuses to continue when the configured ports (<port_80>, <port_443>) differ from the running proxy
-    Given the docker container 'services_global-nginx-proxy_1' should be running
+    Given the file '/opt/easyengine/services/docker-compose.yml' should exist
+      And the docker container 'services_global-nginx-proxy_1' should be running
       And I save the start time of the docker container 'services_global-nginx-proxy_1'
       And a file '/var/tmp/bh-service-command-ports-mismatch.yml' with:
       """
@@ -159,7 +164,8 @@ Feature: Service command (usage, validation and read-only behaviour)
       | 8081    | 443      |
 
   Scenario: ee service enable nginx-proxy accepts quoted port values matching the running proxy
-    Given the docker container 'services_global-nginx-proxy_1' should be running
+    Given the file '/opt/easyengine/services/docker-compose.yml' should exist
+      And the docker container 'services_global-nginx-proxy_1' should be running
       And a file '/var/tmp/bh-service-command-ports-quoted.yml' with:
       """
       proxy_80_port: "80"
