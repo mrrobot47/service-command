@@ -525,8 +525,14 @@ class FeatureContext implements Context
 	 */
 	private static function containerStatus( $container ) {
 		$result = EE::launch( "docker inspect -f '{{.State.Status}}' " . escapeshellarg( $container ), false, true );
-
-		return 0 === $result->return_code ? trim( $result->stdout ) : 'absent';
+		if ( 0 === $result->return_code ) {
+			return trim( $result->stdout );
+		}
+		// Any other failure (e.g. the daemon is down) must not become an 'absent' restore baseline.
+		if ( preg_match( '/No such (object|container)/i', $result->stderr ) ) {
+			return 'absent';
+		}
+		throw new Exception( "Unable to inspect container $container:\n" . $result->stderr );
 	}
 
 	private static function containerStartedAt( $container ) {
@@ -880,6 +886,7 @@ class FeatureContext implements Context
 		}
 		if ( ! file_exists( $path ) ) {
 			$this->file_backups[ $path ] = null;
+			$this->saveState();
 
 			return;
 		}
@@ -906,11 +913,13 @@ class FeatureContext implements Context
 			}
 		} elseif ( ! copy( $backup, $path ) ) {
 			throw new Exception( "Unable to restore $path from $backup." );
-		} else {
-			unlink( $backup );
 		}
 		unset( $this->file_backups[ $path ] );
+		// Journal first: a run killed in between replays the restore instead of missing the backup.
 		$this->saveState();
+		if ( null !== $backup && file_exists( $backup ) ) {
+			unlink( $backup );
+		}
 	}
 
 	private function requireBackup( $path ) {
@@ -1133,10 +1142,20 @@ class FeatureContext implements Context
 		if ( ! isset( $this->saved_outputs[ $command ] ) ) {
 			throw new Exception( "No output saved for: $command" );
 		}
-		$now = EE::launch( $command, false, true )->stdout;
-		if ( $now === $this->saved_outputs[ $command ] ) {
-			throw new Exception( "Output of '$command' did not change:\n$now" );
-		}
+		$saved = $this->saved_outputs[ $command ];
+		$last  = null;
+		// Worker replacement after a reload is asynchronous.
+		$this->waitUntil(
+			function () use ( $command, $saved, &$last ) {
+				$last = EE::launch( $command, false, true );
+
+				return 0 === $last->return_code && '' !== trim( $last->stdout ) && $last->stdout !== $saved;
+			},
+			30,
+			function () use ( $command, &$last ) {
+				return "Output of '$command' did not change within 30 seconds:\nReturn code: {$last->return_code}\nSTDOUT:\n{$last->stdout}\nSTDERR:\n{$last->stderr}";
+			}
+		);
 	}
 
 	/**
@@ -1200,7 +1219,8 @@ class FeatureContext implements Context
 			} elseif ( $was_up && ! $is_up ) {
 				$result = EE::launch( 'docker start ' . $container, false, true );
 			} elseif ( 'absent' === $before && 'absent' !== $now ) {
-				$result = EE::launch( 'docker rm -f ' . $container, false, true );
+				// Graceful stop first: a killed MariaDB/Redis would leave its data volume dirty.
+				$result = EE::launch( 'docker stop -t 30 ' . $container . ' && docker rm ' . $container, false, true );
 			} elseif ( 'absent' !== $before && 'absent' === $now ) {
 				$result = self::compose( 'up --no-start global-' . $service );
 			} elseif ( ! $was_up && $is_up ) {
@@ -1259,8 +1279,20 @@ class FeatureContext implements Context
 	}
 
 	private static function ensureStateDir() {
-		if ( ! is_dir( self::STATE_DIR ) && ! mkdir( self::STATE_DIR, 0700, true ) ) {
+		if ( ! file_exists( self::STATE_DIR ) && ! is_link( self::STATE_DIR ) && ! mkdir( self::STATE_DIR, 0700, true ) ) {
 			throw new Exception( 'Unable to create ' . self::STATE_DIR );
+		}
+		self::assertTrustedStateDir();
+	}
+
+	/**
+	 * The journal names files that recovery overwrites or deletes as root, so only a directory we own and nobody else can write is used.
+	 */
+	private static function assertTrustedStateDir() {
+		clearstatcache();
+		$uid = function_exists( 'posix_geteuid' ) ? posix_geteuid() : 0;
+		if ( is_link( self::STATE_DIR ) || ! is_dir( self::STATE_DIR ) || fileowner( self::STATE_DIR ) !== $uid || ( fileperms( self::STATE_DIR ) & 0022 ) ) {
+			throw new Exception( self::STATE_DIR . ' is not a directory owned by uid ' . $uid . ' and writable only by it: refusing to use it.' );
 		}
 	}
 
@@ -1282,7 +1314,9 @@ class FeatureContext implements Context
 			'created'  => $this->created_files,
 			'services' => $this->service_snapshot,
 		];
-		if ( false === file_put_contents( $file, json_encode( $state ) ) ) {
+		// Atomic replace, so a killed run never leaves a truncated journal.
+		$tmp = $file . '.tmp';
+		if ( false === file_put_contents( $tmp, json_encode( $state ) ) || ! rename( $tmp, $file ) ) {
 			throw new Exception( "Unable to write $file" );
 		}
 	}
@@ -1292,6 +1326,7 @@ class FeatureContext implements Context
 		if ( ! file_exists( $file ) ) {
 			return;
 		}
+		self::assertTrustedStateDir();
 		$state = json_decode( (string) file_get_contents( $file ), true );
 		if ( ! is_array( $state ) ) {
 			throw new Exception( "Corrupt state file $file: restore its entries by hand, then delete it." );
