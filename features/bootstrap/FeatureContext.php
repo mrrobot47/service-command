@@ -79,6 +79,9 @@ class FeatureContext implements Context
 	 */
 	public static $site_prefix = 'bh-service-command-';
 
+	/** File backups and the pending restore state; outside /tmp and kept until restored. */
+	const STATE_DIR = '/var/tmp/bh-service-command-state';
+
 	/**
 	 * Initializes context.
 	 */
@@ -86,6 +89,7 @@ class FeatureContext implements Context
 	{
 		$this->commands = [];
 		$this->ee_path = getcwd();
+		$this->loadPendingState();
 	}
 
 	/**
@@ -324,7 +328,7 @@ class FeatureContext implements Context
 		curl_setopt($ch, CURLOPT_VERBOSE, true);
 		$headers = curl_exec($ch);
 
-		curl_close($ch);
+		self::closeCurl( $ch );
 
 		$rows = $table->getHash();
 
@@ -350,7 +354,7 @@ class FeatureContext implements Context
 		curl_setopt($ch, CURLOPT_VERBOSE, true);
 		$headers = curl_exec($ch);
 
-		curl_close($ch);
+		self::closeCurl( $ch );
 
 		$rows = $table->getHash();
 
@@ -377,7 +381,7 @@ class FeatureContext implements Context
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 		curl_setopt($ch, CURLOPT_VERBOSE, true);
 		$headers = curl_exec($ch);
-		curl_close($ch);
+		self::closeCurl( $ch );
 
 		$rows = $table->getHash();
 
@@ -401,14 +405,18 @@ class FeatureContext implements Context
 			fclose( $socket );
 		}
 		$this->listeners = [];
-		try {
-			$this->restoreBackedUpFiles();
-			$this->removeCreatedFiles();
-		} finally {
-			if ( null !== $this->service_snapshot ) {
-				$this->restoreGlobalServices();
-			}
-		}
+		$this->restorePendingState();
+	}
+
+	/**
+	 * Repairs what a killed or failed earlier run left behind before anything else runs.
+	 *
+	 * @BeforeSuite
+	 */
+	public static function recoverLeftoverState()
+	{
+		$context = new self();
+		$context->restorePendingState();
 	}
 
 	/**
@@ -439,13 +447,6 @@ class FeatureContext implements Context
 			if ( 0 === strpos( $site, self::$site_prefix ) ) {
 				EE::launch( 'bin/ee site delete ' . escapeshellarg( $site ) . ' --yes', false, true );
 			}
-		}
-
-		if(file_exists('ee.phar')) {
-			unlink('ee.phar');
-		}
-		if(file_exists('ee-old.phar')) {
-			unlink('ee-old.phar');
 		}
 	}
 
@@ -478,6 +479,9 @@ class FeatureContext implements Context
 
 	/** @var array Saved container start times, by container name. */
 	public $saved_start_times = [];
+
+	/** @var array Saved command outputs, by command. */
+	public $saved_outputs = [];
 
 	/** @var array Saved file checksums, by path. */
 	public $saved_checksums = [];
@@ -534,8 +538,24 @@ class FeatureContext implements Context
 		return trim( $result->stdout );
 	}
 
+	/**
+	 * Same file list as EE_DOCKER::docker_compose_with_custom(), so recreated services keep user overrides.
+	 */
 	private static function compose( $args ) {
-		return EE::launch( 'cd ' . escapeshellarg( EE_ROOT_DIR . '/services' ) . ' && docker-compose -f docker-compose.yml ' . $args, false, true );
+		$dir   = EE_ROOT_DIR . '/services';
+		$files = [ 'docker-compose.yml' ];
+		foreach ( array_merge( glob( "$dir/user-docker-compose/*.yml" ) ?: [], glob( "$dir/user-docker-compose/*.yaml" ) ?: [] ) as $file ) {
+			$files[] = 'user-docker-compose/' . basename( $file );
+		}
+		if ( file_exists( "$dir/docker-compose-custom.yml" ) ) {
+			$files[] = 'docker-compose-custom.yml';
+		}
+		$flags = '';
+		foreach ( $files as $file ) {
+			$flags .= ' -f ' . escapeshellarg( $file );
+		}
+
+		return EE::launch( 'cd ' . escapeshellarg( $dir ) . ' && docker-compose' . $flags . ' ' . $args, false, true );
 	}
 
 	/**
@@ -556,6 +576,20 @@ class FeatureContext implements Context
 		throw new Exception( is_callable( $failure_message ) ? $failure_message() : $failure_message );
 	}
 
+	private static function closeCurl( $ch ) {
+		// curl_close() is a no-op since PHP 8.0 and deprecated in 8.5 (Behat turns the deprecation into a failure).
+		if ( PHP_VERSION_ID < 80000 ) {
+			curl_close( $ch );
+		}
+	}
+
+	/**
+	 * Masks secrets (the global DB root password in the global docker-compose.yml) in failure output.
+	 */
+	private static function redact( $text ) {
+		return preg_replace( '/(MYSQL_ROOT_PASSWORD=)\S+/', '$1******', $text );
+	}
+
 	private static function httpRequest( $url, $host, &$headers = null ) {
 		$ch = curl_init();
 		curl_setopt( $ch, CURLOPT_URL, $url );
@@ -570,7 +604,7 @@ class FeatureContext implements Context
 		$code     = (int) curl_getinfo( $ch, CURLINFO_HTTP_CODE );
 		$size     = (int) curl_getinfo( $ch, CURLINFO_HEADER_SIZE );
 		$headers  = false === $response ? curl_error( $ch ) : substr( $response, 0, $size );
-		curl_close( $ch );
+		self::closeCurl( $ch );
 
 		return $code;
 	}
@@ -820,7 +854,7 @@ class FeatureContext implements Context
 		$this->theFileShouldExist( $path );
 		$contents = file_get_contents( $path );
 		if ( false === strpos( $contents, $text ) ) {
-			throw new Exception( "File $path does not contain '$text'. Contents:\n$contents" );
+			throw new Exception( "File $path does not contain '$text'. Contents:\n" . self::redact( $contents ) );
 		}
 	}
 
@@ -831,7 +865,7 @@ class FeatureContext implements Context
 		$this->theFileShouldExist( $path );
 		$contents = file_get_contents( $path );
 		if ( false !== strpos( $contents, $text ) ) {
-			throw new Exception( "File $path unexpectedly contains '$text'. Contents:\n$contents" );
+			throw new Exception( "File $path unexpectedly contains '$text'. Contents:\n" . self::redact( $contents ) );
 		}
 	}
 
@@ -849,11 +883,13 @@ class FeatureContext implements Context
 
 			return;
 		}
-		$backup = tempnam( sys_get_temp_dir(), 'bh-backup-' );
+		self::ensureStateDir();
+		$backup = self::STATE_DIR . '/' . sha1( $path );
 		if ( ! copy( $path, $backup ) ) {
 			throw new Exception( "Unable to back up $path." );
 		}
 		$this->file_backups[ $path ] = $backup;
+		$this->saveState();
 	}
 
 	/**
@@ -874,6 +910,7 @@ class FeatureContext implements Context
 			unlink( $backup );
 		}
 		unset( $this->file_backups[ $path ] );
+		$this->saveState();
 	}
 
 	private function requireBackup( $path ) {
@@ -908,13 +945,15 @@ class FeatureContext implements Context
 	 * @Given a file :path with:
 	 */
 	public function aFileWith( $path, PyStringNode $contents ) {
-		if ( file_exists( $path ) ) {
+		// Leftovers of this suite's own temp files (killed run) may be overwritten.
+		if ( file_exists( $path ) && 0 !== strpos( $path, '/var/tmp/bh-service-command-' ) ) {
 			throw new Exception( "Refusing to overwrite existing file $path." );
 		}
+		$this->created_files[] = $path;
+		$this->saveState();
 		if ( false === file_put_contents( $path, $contents->getRaw() . "\n" ) ) {
 			throw new Exception( "Unable to write $path." );
 		}
-		$this->created_files[] = $path;
 	}
 
 	/**
@@ -934,7 +973,7 @@ class FeatureContext implements Context
 		}
 		$this->theFileShouldExist( $path );
 		if ( sha1_file( $path ) !== $this->saved_checksums[ $path ] ) {
-			throw new Exception( "File $path has changed. Contents:\n" . file_get_contents( $path ) );
+			throw new Exception( "File $path has changed. Contents:\n" . self::redact( file_get_contents( $path ) ) );
 		}
 	}
 
@@ -1045,6 +1084,62 @@ class FeatureContext implements Context
 	}
 
 	/**
+	 * Guard for scenarios that regenerate the global compose file and run `up -d`: with other image tags
+	 * than this checkout's img-versions.json, they would upgrade the live containers with no way back.
+	 *
+	 * @Given the running global service containers use the images from img-versions.json
+	 */
+	public function theRunningGlobalServiceContainersUseTheImagesFromImgVersions() {
+		$versions = json_decode( (string) file_get_contents( EE_ROOT . '/img-versions.json' ), true );
+		$images   = [
+			'nginx-proxy'     => 'easyengine/nginx-proxy',
+			'db'              => 'easyengine/mariadb',
+			'redis'           => 'easyengine/redis',
+			'cron'            => 'easyengine/cron',
+			'newrelic-daemon' => 'easyengine/newrelic-daemon',
+		];
+		$mismatches = [];
+		foreach ( $images as $service => $image ) {
+			$container = self::$global_services[ $service ];
+			if ( 'absent' === self::containerStatus( $container ) ) {
+				continue;
+			}
+			$actual   = trim( EE::launch( "docker inspect -f '{{.Config.Image}}' " . escapeshellarg( $container ), false, true )->stdout );
+			$expected = $image . ':' . ( isset( $versions[ $image ] ) ? $versions[ $image ] : '?' );
+			if ( $actual !== $expected ) {
+				$mismatches[] = "$container runs $actual, this checkout would use $expected";
+			}
+		}
+		if ( $mismatches ) {
+			throw new Exception( "Refusing to regenerate the global services:\n" . implode( "\n", $mismatches ) );
+		}
+	}
+
+	/**
+	 * @Given I save the output of the command :command
+	 */
+	public function iSaveTheOutputOfTheCommand( $command ) {
+		$result = EE::launch( $command, false, true );
+		if ( 0 !== $result->return_code || '' === trim( $result->stdout ) ) {
+			throw new Exception( "Command failed or printed nothing: $command\nReturn code: {$result->return_code}\nSTDOUT:\n{$result->stdout}\nSTDERR:\n{$result->stderr}" );
+		}
+		$this->saved_outputs[ $command ] = $result->stdout;
+	}
+
+	/**
+	 * @Then the output of the command :command should have changed
+	 */
+	public function theOutputOfTheCommandShouldHaveChanged( $command ) {
+		if ( ! isset( $this->saved_outputs[ $command ] ) ) {
+			throw new Exception( "No output saved for: $command" );
+		}
+		$now = EE::launch( $command, false, true )->stdout;
+		if ( $now === $this->saved_outputs[ $command ] ) {
+			throw new Exception( "Output of '$command' did not change:\n$now" );
+		}
+	}
+
+	/**
 	 * @When I wait until the global db accepts connections up to :seconds seconds
 	 */
 	public function iWaitUntilTheGlobalDbAcceptsConnections( $seconds ) {
@@ -1074,10 +1169,15 @@ class FeatureContext implements Context
 	 * @BeforeScenario @destructive
 	 */
 	public function snapshotGlobalServices( BeforeScenarioScope $scope ) {
+		// A snapshot left by a failed restore or a killed run is the real baseline: keep it.
+		if ( null !== $this->service_snapshot ) {
+			return;
+		}
 		$this->service_snapshot = [];
 		foreach ( self::$global_services as $service => $container ) {
 			$this->service_snapshot[ $service ] = self::containerStatus( $container );
 		}
+		$this->saveState();
 	}
 
 	/**
@@ -1101,6 +1201,8 @@ class FeatureContext implements Context
 				$result = EE::launch( 'docker start ' . $container, false, true );
 			} elseif ( 'absent' === $before && 'absent' !== $now ) {
 				$result = EE::launch( 'docker rm -f ' . $container, false, true );
+			} elseif ( 'absent' !== $before && 'absent' === $now ) {
+				$result = self::compose( 'up --no-start global-' . $service );
 			} elseif ( ! $was_up && $is_up ) {
 				$result = EE::launch( 'docker stop ' . $container, false, true );
 			} else {
@@ -1110,12 +1212,12 @@ class FeatureContext implements Context
 				$errors[] = "Restoring $service ($before -> $now) failed: {$result->stderr}";
 			}
 		}
-		$this->service_snapshot = null;
-
 		if ( $errors ) {
 			throw new Exception( implode( "\n", $errors ) );
 		}
-		$this->waitForCoreServices( 90, $was_up_list );
+		$this->waitForCoreServices( 180, $was_up_list );
+		// Only forget the baseline once it is really back.
+		$this->service_snapshot = null;
 	}
 
 	private function restoreBackedUpFiles() {
@@ -1133,5 +1235,69 @@ class FeatureContext implements Context
 			}
 		}
 		$this->created_files = [];
+	}
+
+	/**
+	 * Restores files, then global services (they may need the restored compose file); each step runs even if an earlier one fails.
+	 */
+	private function restorePendingState() {
+		try {
+			$this->restoreBackedUpFiles();
+		} finally {
+			try {
+				$this->removeCreatedFiles();
+			} finally {
+				try {
+					if ( null !== $this->service_snapshot ) {
+						$this->restoreGlobalServices();
+					}
+				} finally {
+					$this->saveState();
+				}
+			}
+		}
+	}
+
+	private static function ensureStateDir() {
+		if ( ! is_dir( self::STATE_DIR ) && ! mkdir( self::STATE_DIR, 0700, true ) ) {
+			throw new Exception( 'Unable to create ' . self::STATE_DIR );
+		}
+	}
+
+	/**
+	 * Persists what still has to be restored, so a killed run is repaired by the next one (see recoverLeftoverState()).
+	 */
+	private function saveState() {
+		$file = self::STATE_DIR . '/state.json';
+		if ( empty( $this->file_backups ) && empty( $this->created_files ) && null === $this->service_snapshot ) {
+			if ( file_exists( $file ) ) {
+				unlink( $file );
+			}
+
+			return;
+		}
+		self::ensureStateDir();
+		$state = [
+			'files'    => $this->file_backups,
+			'created'  => $this->created_files,
+			'services' => $this->service_snapshot,
+		];
+		if ( false === file_put_contents( $file, json_encode( $state ) ) ) {
+			throw new Exception( "Unable to write $file" );
+		}
+	}
+
+	private function loadPendingState() {
+		$file = self::STATE_DIR . '/state.json';
+		if ( ! file_exists( $file ) ) {
+			return;
+		}
+		$state = json_decode( (string) file_get_contents( $file ), true );
+		if ( ! is_array( $state ) ) {
+			throw new Exception( "Corrupt state file $file: restore its entries by hand, then delete it." );
+		}
+		$this->file_backups     = isset( $state['files'] ) ? (array) $state['files'] : [];
+		$this->created_files    = isset( $state['created'] ) ? (array) $state['created'] : [];
+		$this->service_snapshot = isset( $state['services'] ) ? $state['services'] : null;
 	}
 }
