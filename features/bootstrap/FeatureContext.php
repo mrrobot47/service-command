@@ -136,16 +136,6 @@ class FeatureContext implements Context
 	}
 
 	/**
-	 * @When I create subsite :subsite in :site
-	 */
-	public function iCreateSubsiteInOfType($subsite, $site )
-	{
-		$php_container = implode( explode( '.', $subsite ) ) . '_php_1';
-
-		EE::launch( "docker exec -it --user='www-data' $php_container sh -c 'wp site create --slug=$site'", false, true );
-	}
-
-	/**
 	 * @Then return value should be 0
 	 */
 	public function returnValueShouldBe0()
@@ -476,6 +466,9 @@ class FeatureContext implements Context
 
 	/** @var array Files created by `a file :path with:` that did not exist before. */
 	public $created_files = [];
+
+	/** @var bool Whether the cleanup restored nginx-proxy files that a running proxy has to reload. */
+	private $reload_proxy = false;
 
 	/** @var array Saved container start times, by container name. */
 	public $saved_start_times = [];
@@ -954,13 +947,20 @@ class FeatureContext implements Context
 	 * @Given a file :path with:
 	 */
 	public function aFileWith( $path, PyStringNode $contents ) {
-		// Leftovers of this suite's own temp files (killed run) may be overwritten.
-		if ( file_exists( $path ) && 0 !== strpos( $path, '/var/tmp/bh-service-command-' ) ) {
-			throw new Exception( "Refusing to overwrite existing file $path." );
+		// Only this suite's own leftover temp files (killed run) may be replaced, never through a symlink.
+		if ( file_exists( $path ) || is_link( $path ) ) {
+			clearstatcache();
+			$uid = function_exists( 'posix_geteuid' ) ? posix_geteuid() : 0;
+			if ( 0 !== strpos( $path, '/var/tmp/bh-service-command-' ) || is_link( $path ) || ! is_file( $path ) || fileowner( $path ) !== $uid ) {
+				throw new Exception( "Refusing to overwrite existing file $path." );
+			}
+			unlink( $path );
 		}
 		$this->created_files[] = $path;
 		$this->saveState();
-		if ( false === file_put_contents( $path, $contents->getRaw() . "\n" ) ) {
+		// Exclusive create: fails instead of following anything put at the path in shared /var/tmp.
+		$fh = @fopen( $path, 'x' );
+		if ( false === $fh || false === fwrite( $fh, $contents->getRaw() . "\n" ) || ! fclose( $fh ) ) {
 			throw new Exception( "Unable to write $path." );
 		}
 	}
@@ -1242,6 +1242,9 @@ class FeatureContext implements Context
 
 	private function restoreBackedUpFiles() {
 		foreach ( array_reverse( array_keys( $this->file_backups ) ) as $path ) {
+			if ( 0 === strpos( $path, EE_ROOT_DIR . '/services/nginx-proxy/' ) ) {
+				$this->reload_proxy = true;
+			}
 			$this->iRestoreTheFile( $path );
 		}
 		$this->saved_checksums   = [];
@@ -1271,11 +1274,29 @@ class FeatureContext implements Context
 					if ( null !== $this->service_snapshot ) {
 						$this->restoreGlobalServices();
 					}
+					$this->reloadProxyAfterRestore();
 				} finally {
 					$this->saveState();
 				}
 			}
 		}
+	}
+
+	/**
+	 * A running proxy keeps serving what it loaded (e.g. a test certificate) until it reloads the restored files.
+	 */
+	private function reloadProxyAfterRestore() {
+		if ( ! $this->reload_proxy ) {
+			return;
+		}
+		$container = self::$global_services['nginx-proxy'];
+		if ( 'running' === self::containerStatus( $container ) ) {
+			$result = EE::launch( 'docker exec ' . $container . ' nginx -s reload', false, true );
+			if ( 0 !== $result->return_code ) {
+				throw new Exception( "Reloading nginx-proxy after restoring its files failed: {$result->stderr}" );
+			}
+		}
+		$this->reload_proxy = false;
 	}
 
 	private static function ensureStateDir() {
