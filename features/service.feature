@@ -1,24 +1,30 @@
 Feature: Service command (usage, validation and read-only behaviour)
 
-  These scenarios never change a global service: they fail before any docker call, or act on services that are already in the requested state.
+  These scenarios never change a global service: they fail before any docker call, or act on services that are already in the requested state (checked, never started here).
 
   Scenario: ee service shows its subcommands
     When I run 'bin/ee service'
-    Then STDOUT should contain 'usage: ee service disable <service-name>'
+    Then the return code should be 0
+      And STDOUT should contain 'usage: ee service disable <service-name>'
       And STDOUT should contain 'ee service enable <service-name>'
       And STDOUT should contain 'ee service refresh'
       And STDOUT should contain 'ee service reload <service-name>'
       And STDOUT should contain 'ee service restart <service-name>'
       And STDOUT should contain "See 'ee help service <command>' for more information on a specific command."
 
+  Scenario: ee service rejects an unknown subcommand
+    When I run 'bin/ee service start nginx-proxy'
+    Then the return code should be 1
+      And STDERR should contain "Error: 'start' is not a registered subcommand of 'service'."
+
   Scenario: ee help service describes the command
-    When I run 'bin/ee help service'
+    When I run 'PAGER=cat bin/ee help service'
     Then the return code should be 0
       And STDOUT should contain 'Manages global services of EasyEngine.'
       And STDOUT should contain 'ee service <command>'
 
   Scenario Outline: ee help service <subcommand> shows its synopsis
-    When I run 'bin/ee help service <subcommand>'
+    When I run 'PAGER=cat bin/ee help service <subcommand>'
     Then the return code should be 0
       And STDOUT should contain '<synopsis>'
 
@@ -33,7 +39,7 @@ Feature: Service command (usage, validation and read-only behaviour)
   # SVC-7: the <service-name> help lists nginx-proxy, db, redis and newrelic-daemon but not cron, which is accepted.
   @known-bug
   Scenario Outline: ee help service <subcommand> lists every accepted service
-    When I run 'bin/ee help service <subcommand>'
+    When I run 'PAGER=cat bin/ee help service <subcommand>'
     Then STDOUT should contain 'cron'
 
     Examples:
@@ -98,7 +104,7 @@ Feature: Service command (usage, validation and read-only behaviour)
       | reload     |
 
   Scenario Outline: ee service enable <service> is a no-op when the service is already running
-    Given the EasyEngine global services are running
+    Given the docker container '<container>' should be running
       And I save the start time of the docker container '<container>'
     When I run 'bin/ee service enable <service>'
     Then the return code should be 0
@@ -114,7 +120,7 @@ Feature: Service command (usage, validation and read-only behaviour)
       | redis       | services_global-redis_1       | Notice: Service global-redis already enabled. |
 
   Scenario: ee service enable twice in a row stays a no-op
-    Given the EasyEngine global services are running
+    Given the docker container 'services_global-redis_1' should be running
       And I save the start time of the docker container 'services_global-redis_1'
     When I run 'bin/ee service enable redis'
       And I run 'bin/ee service enable redis'
@@ -123,13 +129,13 @@ Feature: Service command (usage, validation and read-only behaviour)
       And the docker container 'services_global-redis_1' should not have been restarted
 
   Scenario: --quiet suppresses the already-enabled notice
-    Given the EasyEngine global services are running
+    Given the docker container 'services_global-redis_1' should be running
     When I run 'bin/ee service enable redis --quiet'
     Then the return code should be 0
       And STDOUT should be empty
 
   Scenario Outline: ee service reload <service> warns that the service can't be reloaded
-    Given the EasyEngine global services are running
+    Given the docker container 'services_global-<service>_1' should be running
       And I save the start time of the docker container 'services_global-<service>_1'
     When I run 'bin/ee service reload <service>'
     Then the return code should be 0
@@ -142,7 +148,7 @@ Feature: Service command (usage, validation and read-only behaviour)
       | db      |
       | redis   |
 
-  Scenario Outline: ee service reload <service> warns without touching the container
+  Scenario Outline: ee service reload <service> warns before any docker call
     When I run 'bin/ee service reload <service>'
     Then the return code should be 0
       And STDERR should contain 'Warning: global-<service> can not be reloaded.'
@@ -152,21 +158,27 @@ Feature: Service command (usage, validation and read-only behaviour)
       | cron            |
       | newrelic-daemon |
 
-  Scenario: ee service enable nginx-proxy refuses to continue when the configured ports differ from the running proxy
-    Given the EasyEngine global services are running
+  Scenario Outline: ee service enable nginx-proxy refuses to continue when the configured ports (<port_80>, <port_443>) differ from the running proxy
+    Given the docker container 'services_global-nginx-proxy_1' should be running
       And I save the start time of the docker container 'services_global-nginx-proxy_1'
       And a file '/var/tmp/bh-service-command-ports-mismatch.yml' with:
       """
-      proxy_80_port: "8081"
-      proxy_443_port: "8443"
+      proxy_80_port: "<port_80>"
+      proxy_443_port: "<port_443>"
       """
     When I run 'EE_CONFIG_PATH=/var/tmp/bh-service-command-ports-mismatch.yml bin/ee service enable nginx-proxy'
     Then the return code should be 1
       And STDERR should contain "Error: Ports of current running nginx-proxy and ports specified in EasyEngine config file don't match."
       And the docker container 'services_global-nginx-proxy_1' should not have been restarted
 
+    Examples:
+      | port_80 | port_443 |
+      | 8081    | 8443     |
+      | 80      | 8443     |
+      | 8081    | 443      |
+
   Scenario: ee service enable nginx-proxy accepts quoted port values matching the running proxy
-    Given the EasyEngine global services are running
+    Given the docker container 'services_global-nginx-proxy_1' should be running
       And a file '/var/tmp/bh-service-command-ports-quoted.yml' with:
       """
       proxy_80_port: "80"
@@ -179,7 +191,7 @@ Feature: Service command (usage, validation and read-only behaviour)
   # SVC-5: Spyc parses unquoted `proxy_80_port: 80` as int 80, and nginx_proxy_check() compares it with `!==` to the string from docker inspect, so matching ports are reported as a mismatch.
   @known-bug
   Scenario: ee service enable nginx-proxy accepts unquoted port values matching the running proxy
-    Given the EasyEngine global services are running
+    Given the docker container 'services_global-nginx-proxy_1' should be running
       And a file '/var/tmp/bh-service-command-ports-int.yml' with:
       """
       proxy_80_port: 80

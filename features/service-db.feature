@@ -32,7 +32,8 @@ Feature: Global db (MariaDB) service
       And I wait until a GET request to 'http://127.0.0.1' with Host 'bh-service-command-2.test' returns 200 up to 60 seconds
 
   Scenario: ee service enable db recreates a removed DB container and keeps the data
-    Given I run 'docker rm -f services_global-db_1'
+    # Stop MariaDB cleanly first: rm -f would SIGKILL the live DB and force crash recovery.
+    Given I run 'docker stop -t 60 services_global-db_1 && docker rm services_global-db_1'
       And the docker container 'services_global-db_1' should not exist
     When I run 'bin/ee service enable db'
     Then the return code should be 0
@@ -52,6 +53,7 @@ Feature: Global db (MariaDB) service
 
   Scenario: ee service restart db starts a stopped DB
     Given I run 'bin/ee service disable db'
+      And the docker container 'services_global-db_1' should be stopped
     When I run 'bin/ee service restart db'
     Then the return code should be 0
       And the docker container 'services_global-db_1' should be running

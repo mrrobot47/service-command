@@ -1,19 +1,23 @@
 @destructive
 Feature: ee service refresh
 
-  refresh regenerates /opt/easyengine/services/docker-compose.yml and runs `up -d` for the services that are running. The compose file is backed up and restored by every scenario that modifies it.
+  refresh regenerates /opt/easyengine/services/docker-compose.yml and runs `up -d` for the services that are running. The compose file is backed up and restored by every scenario that modifies it. `--debug` shows which `up -d` calls refresh made. The image guard stops the feature before refresh could upgrade live containers to this checkout's image tags.
 
   Background:
     Given the EasyEngine global services are running
+      And the running global service containers use the images from img-versions.json
       And a test site 'bh-service-command-3.test' of type 'html' exists
       And I wait until a GET request to 'http://127.0.0.1' with Host 'bh-service-command-3.test' returns 200 up to 30 seconds
 
-  Scenario: ee service refresh regenerates a modified global docker-compose.yml
+  Scenario: ee service refresh regenerates a modified global docker-compose.yml and updates the running services
     Given I back up the file '/opt/easyengine/services/docker-compose.yml'
       And I append '# bh-service-command refresh marker' to the file '/opt/easyengine/services/docker-compose.yml'
-    When I run 'bin/ee service refresh'
+    When I run 'bin/ee service refresh --debug'
     Then the return code should be 0
       And STDOUT should contain 'Success: Global services refreshed.'
+      And STDERR should contain 'up -d global-nginx-proxy'
+      And STDERR should contain 'up -d global-db'
+      And STDERR should contain 'up -d global-redis'
       And the file '/opt/easyengine/services/docker-compose.yml' should not contain 'bh-service-command refresh marker'
       And the file '/opt/easyengine/services/docker-compose.yml' should contain 'container_name: services_global-nginx-proxy_1'
       And the file '/opt/easyengine/services/docker-compose.yml' should contain 'container_name: services_global-db_1'
@@ -33,6 +37,7 @@ Feature: ee service refresh
 
   Scenario: ee service refresh recreates a missing global docker-compose.yml
     Given I back up the file '/opt/easyengine/services/docker-compose.yml'
+      And I save the start time of the docker container 'services_global-nginx-proxy_1'
       And I delete the file '/opt/easyengine/services/docker-compose.yml'
     When I run 'bin/ee service refresh'
     Then the return code should be 0
@@ -40,6 +45,7 @@ Feature: ee service refresh
       And the file '/opt/easyengine/services/docker-compose.yml' should contain 'container_name: services_global-nginx-proxy_1'
       And the file '/opt/easyengine/services/docker-compose.yml' should contain the value of the EasyEngine option 'global-db'
       And the docker container 'services_global-nginx-proxy_1' should be running
+      And the docker container 'services_global-nginx-proxy_1' should not have been restarted
       And I wait until a GET request to 'http://127.0.0.1' with Host 'bh-service-command-3.test' returns 200 up to 30 seconds
 
   Scenario: ee service refresh is idempotent
@@ -57,8 +63,11 @@ Feature: ee service refresh
   Scenario: ee service refresh leaves a disabled service stopped
     Given I back up the file '/opt/easyengine/services/docker-compose.yml'
       And I run 'bin/ee service disable redis'
-    When I run 'bin/ee service refresh'
+      And the docker container 'services_global-redis_1' should be stopped
+    When I run 'bin/ee service refresh --debug'
     Then the return code should be 0
+      And STDERR should not contain 'up -d global-redis'
+      And STDERR should contain 'up -d global-nginx-proxy'
       And the docker container 'services_global-redis_1' should be stopped
       And the docker container 'services_global-nginx-proxy_1' should be running
       And the docker container 'services_global-db_1' should be running
@@ -70,6 +79,16 @@ Feature: ee service refresh
     Then the return code should be 0
       And the docker container 'services_global-newrelic-daemon_1' should not exist
 
+  # SVC-8: without a compose file, `docker-compose ps -q` finds nothing, so refresh skips every `up -d` and still reports success.
+  @known-bug
+  Scenario: ee service refresh updates the running services when the compose file was missing
+    Given I back up the file '/opt/easyengine/services/docker-compose.yml'
+      And I delete the file '/opt/easyengine/services/docker-compose.yml'
+    When I run 'bin/ee service refresh --debug'
+    Then the return code should be 0
+      And STDERR should contain 'up -d global-nginx-proxy'
+      And STDERR should contain 'up -d global-db'
+
   # SVC-6: refresh has no synopsis, so the framework skips argument validation and unknown parameters or extra arguments are silently accepted.
   @known-bug
   Scenario: ee service refresh rejects unknown parameters
@@ -77,3 +96,11 @@ Feature: ee service refresh
     When I run 'bin/ee service refresh --foo=bar'
     Then the return code should be 1
       And STDERR should contain 'unknown --foo parameter'
+
+  # SVC-6: see above.
+  @known-bug
+  Scenario: ee service refresh rejects positional arguments
+    Given I back up the file '/opt/easyengine/services/docker-compose.yml'
+    When I run 'bin/ee service refresh nginx-proxy'
+    Then the return code should be 1
+      And STDERR should contain 'Too many positional arguments: nginx-proxy'

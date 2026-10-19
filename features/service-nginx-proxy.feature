@@ -28,19 +28,58 @@ Feature: Global nginx-proxy service
     When I run 'bin/ee service enable nginx-proxy'
     Then the return code should be 0
       And STDERR should not contain 'Error'
+      And STDOUT should contain 'Service nginx_proxy'
       And the docker container 'services_global-nginx-proxy_1' should be running
-      And the file '/opt/easyengine/services/nginx-proxy/certs/default.crt' should exist
-      And the file '/opt/easyengine/services/nginx-proxy/certs/default.key' should exist
       And I wait until a GET request to 'http://127.0.0.1' with Host 'bh-service-command-1.test' returns 200 up to 30 seconds
 
   # SVC-1: nginx_proxy_check() returns null (not true) when the default cert already exists, so enable prints the "already enabled" notice after starting the proxy, and set_nginx_proxy_version_conf() is skipped.
   @known-bug
   Scenario: ee service enable nginx-proxy reports success after starting a stopped proxy
     Given I run 'bin/ee service disable nginx-proxy'
+      And the docker container 'services_global-nginx-proxy_1' should be stopped
     When I run 'bin/ee service enable nginx-proxy'
     Then the return code should be 0
       And STDOUT should contain 'Success: Service nginx_proxy enabled.'
       And STDOUT should not contain 'already enabled'
+
+  # SVC-1: after a recreate, /version.conf keeps the image's "EasyEngine v4" because set_nginx_proxy_version_conf() is skipped.
+  @known-bug
+  Scenario: ee service enable nginx-proxy writes the EasyEngine version into a recreated proxy
+    Given I run 'docker rm -f services_global-nginx-proxy_1'
+    When I run 'bin/ee service enable nginx-proxy'
+    Then the return code should be 0
+      And I wait until the command 'docker exec services_global-nginx-proxy_1 cat /version.conf' outputs 'EasyEngine v4.' up to 10 seconds
+
+  Scenario: ee service enable nginx-proxy generates a missing default certificate, writes the version and reports success
+    Given I back up the file '/opt/easyengine/services/nginx-proxy/certs/default.key'
+      And I back up the file '/opt/easyengine/services/nginx-proxy/certs/default.crt'
+      And I run 'bin/ee service disable nginx-proxy'
+      And the docker container 'services_global-nginx-proxy_1' should be stopped
+      And I delete the file '/opt/easyengine/services/nginx-proxy/certs/default.key'
+      And I delete the file '/opt/easyengine/services/nginx-proxy/certs/default.crt'
+    When I run 'bin/ee service enable nginx-proxy'
+    Then the return code should be 0
+      And STDOUT should contain 'Success: Service nginx_proxy enabled.'
+      And the file '/opt/easyengine/services/nginx-proxy/certs/default.key' should exist
+      And the file '/opt/easyengine/services/nginx-proxy/certs/default.crt' should exist
+      And I wait until the command 'openssl x509 -noout -subject -in /opt/easyengine/services/nginx-proxy/certs/default.crt' outputs 'default' up to 5 seconds
+      And I wait until the command 'docker exec services_global-nginx-proxy_1 cat /version.conf' outputs 'EasyEngine v4.' up to 10 seconds
+      And I wait until a GET request to 'http://127.0.0.1' with Host 'bh-service-command-1.test' returns 200 up to 30 seconds
+    # Put the original cert back and make nginx load it again.
+    When I restore the file '/opt/easyengine/services/nginx-proxy/certs/default.key'
+      And I restore the file '/opt/easyengine/services/nginx-proxy/certs/default.crt'
+      And I run 'bin/ee service reload nginx-proxy'
+    Then the return code should be 0
+
+  Scenario: ee service enable nginx-proxy fails when docker-compose cannot start the proxy
+    Given I back up the file '/opt/easyengine/services/docker-compose.yml'
+      And I run 'bin/ee service disable nginx-proxy'
+      And the docker container 'services_global-nginx-proxy_1' should be stopped
+      And I append 'bh-service-command-broken: [' to the file '/opt/easyengine/services/docker-compose.yml'
+    When I run 'bin/ee service enable nginx-proxy'
+    Then the return code should be 1
+      And STDERR should contain 'Error: There was some error in starting services_global-nginx-proxy_1 container. Please check logs.'
+      And the docker container 'services_global-nginx-proxy_1' should be stopped
 
   Scenario: ee service enable nginx-proxy recreates a removed proxy container
     Given I run 'docker rm -f services_global-nginx-proxy_1'
@@ -51,7 +90,8 @@ Feature: Global nginx-proxy service
       And I wait until a GET request to 'http://127.0.0.1' with Host 'bh-service-command-1.test' returns 200 up to 30 seconds
 
   Scenario: ee service enable nginx-proxy regenerates a missing global docker-compose.yml
-    Given I back up the file '/opt/easyengine/services/docker-compose.yml'
+    Given the running global service containers use the images from img-versions.json
+      And I back up the file '/opt/easyengine/services/docker-compose.yml'
       And I run 'docker rm -f services_global-nginx-proxy_1'
       And I delete the file '/opt/easyengine/services/docker-compose.yml'
     When I run 'bin/ee service enable nginx-proxy'
@@ -93,6 +133,7 @@ Feature: Global nginx-proxy service
 
   Scenario: ee service restart nginx-proxy starts a stopped proxy
     Given I run 'bin/ee service disable nginx-proxy'
+      And the docker container 'services_global-nginx-proxy_1' should be stopped
     When I run 'bin/ee service restart nginx-proxy'
     Then the return code should be 0
       And the docker container 'services_global-nginx-proxy_1' should be running
@@ -102,10 +143,12 @@ Feature: Global nginx-proxy service
     Given I back up the file '/opt/easyengine/services/nginx-proxy/conf.d/default.conf'
       And I append '# bh-service-command reload marker' to the file '/opt/easyengine/services/nginx-proxy/conf.d/default.conf'
       And I save the start time of the docker container 'services_global-nginx-proxy_1'
+      And I save the output of the command "docker top services_global-nginx-proxy_1 -eo pid,args | grep -F 'nginx: worker' | awk '{print $1}'"
     When I run 'bin/ee service reload nginx-proxy'
     Then the return code should be 0
       And STDOUT should contain 'Success: Reloaded global-nginx-proxy.'
       And the docker container 'services_global-nginx-proxy_1' should not have been restarted
+      And the output of the command "docker top services_global-nginx-proxy_1 -eo pid,args | grep -F 'nginx: worker' | awk '{print $1}'" should have changed
       And the file '/opt/easyengine/services/nginx-proxy/conf.d/default.conf' should not contain 'bh-service-command reload marker'
       And the file '/opt/easyengine/services/nginx-proxy/conf.d/default.conf' should contain 'bh-service-command-1.test'
       And a GET request to 'http://127.0.0.1' with Host 'bh-service-command-1.test' should return 200
