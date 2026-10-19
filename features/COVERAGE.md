@@ -21,7 +21,7 @@ Suite for `ee service` (package `easyengine/service-command`, base `upstream/dev
 | Unknown service (`foo`, `global-db`, `nginx_proxy`, `DB`, `mailhog`, `php`) → `Error: Unable to find global EasyEngine service X` | `filter_service()` | service.feature outline "rejects an unknown service" |
 | Extra positional argument → `Too many positional arguments` | framework | service.feature outline "accepts only one service"; refresh: service-refresh.feature `@known-bug` (SVC-6) |
 | Unknown `--param` → `unknown --foo parameter` | framework | service.feature outline "rejects unknown parameters"; refresh: service-refresh.feature `@known-bug` (SVC-6) |
-| Global `--quiet` | framework | service.feature "--quiet suppresses the already-enabled notice" |
+| Global `--quiet` | framework | service.feature "--quiet suppresses the already-enabled notice" `@known-bug` (CORE-3/CFG-5: `--quiet` never takes effect) |
 | Global `--debug` | framework | used by service-refresh.feature to see which `up -d` calls refresh makes |
 | `EE_CONFIG_PATH` / `proxy_80_port` / `proxy_443_port` config keys | `nginx_proxy_check()` | service.feature (mismatch on both or one port, quoted match, unquoted `@known-bug` SVC-5), service-nginx-proxy.feature (ports busy) |
 | Global `--custom-compose` pointing to a missing file → warning, falls back to the default compose file | `docker_compose_with_custom()` | service-redis.feature "falls back to the default compose file when --custom-compose is missing" |
@@ -80,7 +80,7 @@ About 88% of the inventory rows above (49 of 56 command/behaviour rows); the gap
 
 | Feature | Scenarios | Tags |
 |---|---|---|
-| service.feature | 47 | none (read-only), 5 `@known-bug` |
+| service.feature | 47 | none (read-only), 6 `@known-bug` |
 | service-nginx-proxy.feature | 16 | `@destructive`, 3 `@known-bug` |
 | service-db.feature | 6 | `@destructive` |
 | service-redis.feature | 11 | `@destructive`, 3 `@known-bug` |
@@ -88,7 +88,7 @@ About 88% of the inventory rows above (49 of 56 command/behaviour rows); the gap
 | service-newrelic-daemon.feature | 5 | `@destructive @newrelic`, 1 `@known-bug` |
 | service-refresh.feature | 8 | `@destructive`, 3 `@known-bug` |
 
-Totals: `@destructive` 53, `@known-bug` 15, `@newrelic` 5 (pulls `easyengine/newrelic-daemon` from Docker Hub), `@le` 0, `@remote` 0. Exclude known bugs with `--tags='~@known-bug'`; run only the read-only part with `--tags='~@destructive'`.
+Totals: `@destructive` 53, `@known-bug` 16, `@newrelic` 5 (pulls `easyengine/newrelic-daemon` from Docker Hub), `@le` 0, `@remote` 0. Exclude known bugs with `--tags='~@known-bug'`; run only the read-only part with `--tags='~@destructive'`.
 
 ## Environment and safety
 
@@ -121,6 +121,7 @@ About 18 minutes on this machine: the read-only feature ~2 min; nginx-proxy ~4 m
 | SVC-6 | service-refresh.feature "rejects unknown parameters", "rejects positional arguments" | `refresh()` has no synopsis, so the framework skips argument validation and `ee service refresh --foo=bar extra` runs a refresh. |
 | SVC-7 | service.feature outline "lists every accepted service" | The `<service-name>` help lists `nginx-proxy, db, redis, newrelic-daemon` but not `cron`. Also (not tested): the class examples all say "Restarts global nginx proxy service", and `composer.json` `extra.commands` omits `service refresh`. |
 | SVC-8 | service-refresh.feature "updates the running services when the compose file was missing" | `refresh` probes running services with plain `docker-compose ps -q` before regenerating the file; without the file it finds nothing, skips every `up -d` and still prints `Global services refreshed.` |
+| CORE-3 (core, also CFG-5) | service.feature "--quiet suppresses the already-enabled notice" | `InitializeLogger` runs before `ConfigureRunner`, so the logger never sees `quiet` and `--quiet` still prints `Notice: Service global-redis already enabled.` (first seen on CI: https://github.com/mrrobot47/service-command/actions/runs/36085614782). |
 
 ## Suspected issues not covered by a scenario
 

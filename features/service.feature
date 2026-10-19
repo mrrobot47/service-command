@@ -128,6 +128,8 @@ Feature: Service command (usage, validation and read-only behaviour)
       And STDOUT should contain 'Notice: Service global-redis already enabled.'
       And the docker container 'services_global-redis_1' should not have been restarted
 
+  # CORE-3/CFG-5: the logger is chosen before the arguments are parsed, so --quiet never takes effect.
+  @known-bug
   Scenario: --quiet suppresses the already-enabled notice
     Given the docker container 'services_global-redis_1' should be running
     When I run 'bin/ee service enable redis --quiet'
