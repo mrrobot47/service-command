@@ -1,7 +1,7 @@
 @destructive
 Feature: Global cron service
 
-  With no site cron jobs the cron container restart-loops (CRON-1), so "running or restarting" is accepted wherever it should be up. The global cron container only exists once something enabled it, so scenarios that need it enable it first.
+  With no site cron jobs the cron container can restart-loop (an older cron config, before EasyEngine/cron-command#60), so "running or restarting" is accepted wherever it should be up. The global cron container only exists once something enabled it, so scenarios that need it enable it first.
 
   Background:
     Given the EasyEngine global services are running

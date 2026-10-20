@@ -698,7 +698,7 @@ class FeatureContext implements Context
 	}
 
 	/**
-	 * Tolerates restart loops (e.g. global cron with no jobs, CRON-1).
+	 * Tolerates restart loops (e.g. global cron with no jobs on an older cron config).
 	 *
 	 * @Then the docker container :name should be running or restarting
 	 */

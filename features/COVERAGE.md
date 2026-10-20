@@ -19,11 +19,11 @@ Suite for `ee service` (package `easyengine/service-command`, base `upstream/dev
 | `<service-name>` values: `nginx-proxy`, `db`, `redis`, `cron`, `newrelic-daemon` (`$whitelisted_services`) | `filter_service()` | every service feature (one per service) |
 | Missing `<service-name>` → `usage: …`, exit 1 | framework | service.feature outline "without a service name prints usage" |
 | Unknown service (`foo`, `global-db`, `nginx_proxy`, `DB`, `mailhog`, `php`) → `Error: Unable to find global EasyEngine service X` | `filter_service()` | service.feature outline "rejects an unknown service" |
-| Extra positional argument → `Too many positional arguments` | framework | service.feature outline "accepts only one service"; refresh not covered yet: SVC-6 (its scenario comes back with the fix) |
-| Unknown `--param` → `unknown --foo parameter` | framework | service.feature outline "rejects unknown parameters"; refresh not covered yet: SVC-6 (its scenario comes back with the fix) |
-| Global `--quiet` | framework | not covered yet: CORE-3/CFG-5, `--quiet` never takes effect (its scenario comes back with the fix) |
+| Extra positional argument → `Too many positional arguments` | framework | service.feature outline "accepts only one service"; refresh not covered yet: refresh has no synopsis, so nothing is validated (its scenario comes back with the fix) |
+| Unknown `--param` → `unknown --foo parameter` | framework | service.feature outline "rejects unknown parameters"; refresh not covered yet: same cause (its scenario comes back with the fix) |
+| Global `--quiet` | framework | not covered yet: core sets up the logger before parsing the config, so `--quiet` never takes effect (its scenario comes back with the fix) |
 | Global `--debug` | framework | used by service-refresh.feature to see which `up -d` calls refresh makes |
-| `EE_CONFIG_PATH` / `proxy_80_port` / `proxy_443_port` config keys | `nginx_proxy_check()` | service.feature (mismatch on both or one port, quoted match; unquoted not covered yet: SVC-5), service-nginx-proxy.feature (ports busy) |
+| `EE_CONFIG_PATH` / `proxy_80_port` / `proxy_443_port` config keys | `nginx_proxy_check()` | service.feature (mismatch on both or one port, quoted match; unquoted not covered yet: an unquoted port is an int and never matches), service-nginx-proxy.feature (ports busy) |
 | Global `--custom-compose` pointing to a missing file → warning, falls back to the default compose file | `docker_compose_with_custom()` | service-redis.feature "falls back to the default compose file when --custom-compose is missing" |
 | Existing custom compose files (`user-docker-compose/*.yml`, `docker-compose-custom.yml`) are added with `-f` | `docker_compose_with_custom()` | not covered: core behaviour; adding an override to the live global services is too invasive (the restore hook does honour them) |
 
@@ -34,39 +34,39 @@ Suite for `ee service` (package `easyengine/service-command`, base `upstream/dev
 | enable nginx-proxy on a running proxy: port check, notice `Service nginx_proxy already enabled.`, no restart | service.feature outline "is a no-op when the service is already running" |
 | enable nginx-proxy: configured ports differ from the running proxy (either port) → error, no restart | service.feature outline "refuses to continue when the configured ports … differ" |
 | enable nginx-proxy on a stopped proxy: port probe, `docker-compose up -d global-nginx-proxy`, sites served again | service-nginx-proxy.feature "starts a stopped proxy and sites come back" |
-| enable nginx-proxy success message after a start, and the version written into a recreated proxy | not covered yet: SVC-1 (its 2 scenarios come back with the fix) |
+| enable nginx-proxy success message after a start, and the version written into a recreated proxy | not covered yet: `nginx_proxy_check()` returns early when the default cert exists (its 2 scenarios come back with the fix) |
 | enable nginx-proxy with ports busy → `Cannot create/start proxy container…`, proxy stays stopped | service-nginx-proxy.feature "refuses to start when the configured ports are busy" |
 | enable nginx-proxy with the container removed → recreated | service-nginx-proxy.feature "recreates a removed proxy container" |
 | enable nginx-proxy with `services/docker-compose.yml` missing → file regenerated (containers, DB password option) | service-nginx-proxy.feature "regenerates a missing global docker-compose.yml" |
 | enable nginx-proxy generating `certs/default.{key,crt}` when missing (`Site_Self_signed`, CN=default), writing `/version.conf` and printing `Success` | service-nginx-proxy.feature "generates a missing default certificate, writes the version and reports success" (restores the original cert and reloads) |
 | enable nginx-proxy when `docker-compose up` fails → `There was some error in starting …`, exit 1 | service-nginx-proxy.feature "fails when docker-compose cannot start the proxy" (invalid YAML appended to the backed-up compose file) |
-| enable nginx-proxy after changing the proxy ports while it is stopped (new ports checked, old ports bound) | not covered: SVC-10; a passing (fixed) run would leave the live proxy on test ports |
-| enable db/redis/cron/newrelic-daemon on a running container → `Notice: Service global-X already enabled.` | service.feature outline (db, redis), service-newrelic-daemon.feature "twice is a no-op"; cron accepts either message (restart loop, CRON-1) |
+| enable nginx-proxy after changing the proxy ports while it is stopped (new ports checked, old ports bound) | not covered: the compose file is only regenerated when missing, so new ports aren't applied; a passing (fixed) run would leave the live proxy on test ports |
+| enable db/redis/cron/newrelic-daemon on a running container → `Notice: Service global-X already enabled.` | service.feature outline (db, redis), service-newrelic-daemon.feature "twice is a no-op"; cron accepts either message (it can be restart-looping, see below) |
 | enable db/redis/… with `services/docker-compose.yml` missing → file regenerated, running container untouched | service-redis.feature "regenerates a missing global docker-compose.yml without restarting redis" |
 | enable on an exited container → `docker start` | service-db/redis/cron.feature "starts a stopped …" |
 | enable on a missing container → `docker-compose up -d global-X` | service-db/redis/cron.feature "recreates a removed … container", service-newrelic-daemon.feature "creates and starts the daemon" (image pull) |
 | enable db keeps data (named volume) after the container is removed | service-db.feature "recreates a removed DB container and keeps the data" (WordPress site answers 200; the DB is stopped cleanly before `docker rm`) |
-| enable ignores `boot_container()` failures (SVC-4, MIG-2) | not covered yet: SVC-4 (its scenario comes back with the fix) |
+| enable ignores `boot_container()` failures | not covered yet: `init_global_container()` always returns true (its scenario comes back with the fix) |
 | enable on macOS copies `my.cnf` for db | not covered: macOS only |
 | disable → `docker-compose stop`, container kept (exited), `Success: Service global-X disabled.` | every service feature |
 | disable effect on sites: proxy down → connection refused; DB down → WordPress 500 | service-nginx-proxy.feature, service-db.feature |
 | disable idempotent (twice) | service-nginx-proxy/db/redis/cron.feature |
 | disable of a never-created service → exit 0, nothing created | service-newrelic-daemon.feature |
-| disable/restart when docker-compose fails → still `Success`, exit 0 | not covered yet: SVC-2 (its scenario comes back with the fix) |
-| restart → new `State.StartedAt`, services answer again (HTTP 200, `SELECT 1`, `PONG`) | service-nginx-proxy/db/redis.feature; cron and newrelic-daemon only check the running state (cron restart-loops, CRON-1) |
+| disable/restart when docker-compose fails → still `Success`, exit 0 | not covered yet: the docker-compose result is ignored (its scenario comes back with the fix) |
+| restart → new `State.StartedAt`, services answer again (HTTP 200, `SELECT 1`, `PONG`) | service-nginx-proxy/db/redis.feature; cron and newrelic-daemon only check the running state (cron can be restart-looping, see below) |
 | restart of a stopped service starts it (docker-compose semantics) | every service feature "restart … starts a stopped …" (the precondition asserts it is stopped) |
-| restart of a never-created service claims success | not covered yet: SVC-3 (its scenario comes back with the fix) |
+| restart of a never-created service claims success | not covered yet: `docker-compose restart` exits 0 without a container (its scenario comes back with the fix) |
 | reload nginx-proxy: docker-gen regenerates `conf.d/default.conf`, `nginx -s reload` (new worker PIDs), no container restart | service-nginx-proxy.feature "regenerates the proxy config without restarting" (marker removed, worker PIDs changed, start time unchanged) |
 | reload idempotent | service-nginx-proxy.feature "reload nginx-proxy twice" |
-| reload on a stopped proxy still prints success | not covered yet: SVC-2 (its scenario comes back with the fix) |
+| reload on a stopped proxy still prints success | not covered yet: the docker-compose result is ignored (its scenario comes back with the fix) |
 | reload of db/redis/cron/newrelic-daemon → `Warning: global-X can not be reloaded.`, exit 0, no docker call | service.feature outlines |
 | refresh regenerates the compose file (all 5 services, both networks, subnets and DB password from `options`) and runs `up -d` for the running services | service-refresh.feature "regenerates a modified global docker-compose.yml and updates the running services" (`--debug` shows the `up -d` calls) |
 | refresh with the compose file missing: file regenerated, nothing restarted | service-refresh.feature "recreates a missing global docker-compose.yml" |
-| refresh with the compose file missing skips every `up -d` | not covered yet: SVC-8 (its scenario comes back with the fix) |
+| refresh with the compose file missing skips every `up -d` | not covered yet: running services are probed before the file is regenerated (its scenario comes back with the fix) |
 | refresh is idempotent (same file, no container recreated) | service-refresh.feature "is idempotent" |
 | refresh keeps stopped services stopped (no `up -d` for them) and doesn't create never-enabled ones | service-refresh.feature "leaves a disabled service stopped", "does not create services that were never enabled" (relies on compose v2, where `ps -q` lists only running containers) |
 | refresh applies image tag or port changes to running containers | not covered: needs a changed `img-versions.json` or proxy ports, which recreates the live proxy on other ports |
-| compose generation side effects: labelled volumes created when missing, subnet options initialised, random DB password when the `global-db` option is empty | not covered: all already exist on a live stack; recreating them would destroy data or change the DB password (SVC-11) |
+| compose generation side effects: labelled volumes created when missing, subnet options initialised, random DB password when the `global-db` option is empty | not covered: all already exist on a live stack; recreating them would destroy data or change the DB password (see the last item below) |
 | constructor creates and enters `EE_SERVICE_DIR` | not covered: the directory always exists on a live stack |
 | Container migrations under `migrations/container/` | not covered: run by core's migration pipeline, not by `ee service` |
 
@@ -88,7 +88,7 @@ About 75% of the inventory rows above (42 of 56 command/behaviour rows); the gap
 | service-newrelic-daemon.feature | 4 | `@destructive @newrelic` |
 | service-refresh.feature | 5 | `@destructive` |
 
-Totals: `@destructive` 43, `@newrelic` 4 (pulls `easyengine/newrelic-daemon` from Docker Hub), `@le` 0, `@remote` 0. Run only the read-only part with `--tags='~@destructive'`. No `@known-bug` scenarios ship here: the 16 scenario rows written for open bugs (SVC-1 to SVC-8, CORE-3) are held back until their fixes land and then return as regular scenarios.
+Totals: `@destructive` 43, `@newrelic` 4 (pulls `easyengine/newrelic-daemon` from Docker Hub), `@le` 0, `@remote` 0. Run only the read-only part with `--tags='~@destructive'`. No `@known-bug` scenarios ship here: the 16 scenario rows written for the open bugs listed under "Known bugs" are held back until their fixes land and then return as regular scenarios.
 
 ## Environment and safety
 
@@ -101,7 +101,7 @@ Totals: `@destructive` 43, `@newrelic` 4 (pulls `easyengine/newrelic-daemon` fro
 - Scenarios that regenerate the compose file and run `up -d` (refresh, compose regeneration) first check that the running global containers use this checkout's `img-versions.json` tags, so they can't upgrade the live stack.
 - The global DB and redis are stopped cleanly (`docker stop`) before `docker rm`, never SIGKILLed.
 - Failure messages that print the global `docker-compose.yml` mask `MYSQL_ROOT_PASSWORD`.
-- The cron container restart-loops when no site has cron jobs (CRON-1); cron checks accept "running or restarting", and cron scenarios enable it first because it only exists once something enabled it.
+- The cron container restart-looped when no site had cron jobs (fixed in EasyEngine/cron-command#60; an older cron config still does it); cron checks accept "running or restarting", and cron scenarios enable it first because it only exists once something enabled it.
 - The WordPress site of the db feature may start global cron; if cron was absent before a scenario, the restore removes it again.
 - Paths assume Linux (`/opt/easyengine`). Run the suite with a checkout whose `VERSION` matches the installed ee, otherwise the first `bin/ee` call runs the migration pipeline on the host.
 
@@ -111,20 +111,20 @@ About 18 minutes on this machine: the read-only feature ~2 min; nginx-proxy ~4 m
 
 ## Known bugs (scenarios held back until fixed)
 
-| ID | Held-back scenario | Issue |
+| Bug | Held-back scenario | Issue |
 |---|---|---|
-| SVC-1 | service-nginx-proxy.feature "reports success after starting a stopped proxy", "writes the EasyEngine version into a recreated proxy" | `nginx_proxy_check()` does a bare `return;` when the default cert exists, so after starting a stopped proxy `enable` prints `Notice: Service nginx_proxy already enabled.` and `set_nginx_proxy_version_conf()` never runs: a recreated proxy keeps the image's `X-Powered-By "EasyEngine v4"`. |
-| SVC-2 | service-nginx-proxy.feature "reload nginx-proxy fails when the proxy is stopped", service-redis.feature outline "fails when the global docker-compose.yml is missing" (disable, restart) | `disable`, `restart` and `reload` call `EE::exec( …, true, true )` without `$exit_on_error` and ignore the result, so a failed docker-compose call still prints `Success:` and exits 0. |
-| SVC-3 | service-newrelic-daemon.feature "restart newrelic-daemon does not claim success" | `docker-compose restart` exits 0 for a service with no container, so `ee service restart newrelic-daemon` claims a restart that never happened. |
-| SVC-4 | service-redis.feature "enable redis fails when docker-compose cannot create the container" | `init_global_container()` ignores `boot_container()`'s result and always returns true, so a failed `up -d` prints `Success: Service global-redis enabled.` |
-| SVC-5 | service.feature "accepts unquoted port values" | `get_config_value()` returns Spyc's int for `proxy_80_port: 80`; `nginx_proxy_check()` compares it with `!==` against the docker inspect string, so matching ports are reported as `Ports … don't match` and `enable nginx-proxy` exits 1. |
-| SVC-6 | service-refresh.feature "rejects unknown parameters", "rejects positional arguments" | `refresh()` has no synopsis, so the framework skips argument validation and `ee service refresh --foo=bar extra` runs a refresh. |
-| SVC-7 | service.feature outline "lists every accepted service" | The `<service-name>` help lists `nginx-proxy, db, redis, newrelic-daemon` but not `cron`. Also (not tested): the class examples all say "Restarts global nginx proxy service", and `composer.json` `extra.commands` omits `service refresh`. |
-| SVC-8 | service-refresh.feature "updates the running services when the compose file was missing" | `refresh` probes running services with plain `docker-compose ps -q` before regenerating the file; without the file it finds nothing, skips every `up -d` and still prints `Global services refreshed.` |
-| CORE-3 (core, also CFG-5) | service.feature "--quiet suppresses the already-enabled notice" | `InitializeLogger` runs before `ConfigureRunner`, so the logger never sees `quiet` and `--quiet` still prints `Notice: Service global-redis already enabled.` (first seen on CI: https://github.com/mrrobot47/service-command/actions/runs/36085614782). |
+| Early return in `nginx_proxy_check()` | service-nginx-proxy.feature "reports success after starting a stopped proxy", "writes the EasyEngine version into a recreated proxy" | `nginx_proxy_check()` does a bare `return;` when the default cert exists, so after starting a stopped proxy `enable` prints `Notice: Service nginx_proxy already enabled.` and `set_nginx_proxy_version_conf()` never runs: a recreated proxy keeps the image's `X-Powered-By "EasyEngine v4"`. |
+| Ignored docker-compose result | service-nginx-proxy.feature "reload nginx-proxy fails when the proxy is stopped", service-redis.feature outline "fails when the global docker-compose.yml is missing" (disable, restart) | `disable`, `restart` and `reload` call `EE::exec( …, true, true )` without `$exit_on_error` and ignore the result, so a failed docker-compose call still prints `Success:` and exits 0. |
+| Restart without a container | service-newrelic-daemon.feature "restart newrelic-daemon does not claim success" | `docker-compose restart` exits 0 for a service with no container, so `ee service restart newrelic-daemon` claims a restart that never happened. |
+| Ignored `boot_container()` result | service-redis.feature "enable redis fails when docker-compose cannot create the container" | `init_global_container()` ignores `boot_container()`'s result and always returns true, so a failed `up -d` prints `Success: Service global-redis enabled.` |
+| Unquoted port values | service.feature "accepts unquoted port values" | `get_config_value()` returns Spyc's int for `proxy_80_port: 80`; `nginx_proxy_check()` compares it with `!==` against the docker inspect string, so matching ports are reported as `Ports … don't match` and `enable nginx-proxy` exits 1. |
+| `refresh` has no synopsis | service-refresh.feature "rejects unknown parameters", "rejects positional arguments" | `refresh()` has no synopsis, so the framework skips argument validation and `ee service refresh --foo=bar extra` runs a refresh. |
+| Help omits `cron` | service.feature outline "lists every accepted service" | The `<service-name>` help lists `nginx-proxy, db, redis, newrelic-daemon` but not `cron`. Also (not tested): the class examples all say "Restarts global nginx proxy service", and `composer.json` `extra.commands` omits `service refresh`. |
+| `refresh` without the compose file | service-refresh.feature "updates the running services when the compose file was missing" | `refresh` probes running services with plain `docker-compose ps -q` before regenerating the file; without the file it finds nothing, skips every `up -d` and still prints `Global services refreshed.` |
+| `--quiet` ignored (core) | service.feature "--quiet suppresses the already-enabled notice" | `InitializeLogger` runs before `ConfigureRunner`, so the logger never sees `quiet` and `--quiet` still prints `Notice: Service global-redis already enabled.` (first seen on CI: https://github.com/mrrobot47/service-command/actions/runs/36085614782). |
 
 ## Suspected issues not covered by a scenario
 
-- SVC-9 (cosmetic): inconsistent service names in messages: `Service nginx_proxy enabled.` vs `Service global-nginx-proxy disabled.` vs `Service global-db enabled.`, and `Reloaded global-nginx-proxy.`.
-- SVC-10: changed proxy ports aren't applied when starting a stopped proxy (the compose file is only regenerated when missing).
-- SVC-11: an empty `global-db` option makes compose generation write a new random root password that no longer matches the existing datadir.
+- Cosmetic: inconsistent service names in messages: `Service nginx_proxy enabled.` vs `Service global-nginx-proxy disabled.` vs `Service global-db enabled.`, and `Reloaded global-nginx-proxy.`.
+- Changed proxy ports aren't applied when starting a stopped proxy (the compose file is only regenerated when missing).
+- An empty `global-db` option makes compose generation write a new random root password that no longer matches the existing datadir.
