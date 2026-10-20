@@ -513,6 +513,10 @@ class FeatureContext implements Context
 
 	private static function listSites() {
 		$result = EE::launch( 'bin/ee site list --format=text', false, true );
+		// An empty install exits 1 with "No sites found!"; any other failure must not look like an empty list.
+		if ( 0 !== $result->return_code && false === strpos( $result->stderr, 'No sites found!' ) ) {
+			throw new Exception( "Unable to list sites:\n" . $result->stderr );
+		}
 
 		return array_filter( array_map( 'trim', explode( "\n", $result->stdout ) ) );
 	}
