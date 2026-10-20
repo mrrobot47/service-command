@@ -889,7 +889,8 @@ class FeatureContext implements Context
 		}
 		self::ensureStateDir();
 		$backup = self::STATE_DIR . '/' . sha1( $path );
-		if ( ! copy( $path, $backup ) ) {
+		// The backup keeps the original mode, which the restore puts back (the state dir is 0700).
+		if ( ! copy( $path, $backup ) || ! chmod( $backup, fileperms( $path ) & 0777 ) ) {
 			throw new Exception( "Unable to back up $path." );
 		}
 		$this->file_backups[ $path ] = $backup;
@@ -904,12 +905,23 @@ class FeatureContext implements Context
 			throw new Exception( "File $path has not been backed up." );
 		}
 		$backup = $this->file_backups[ $path ];
+		// Journaled before the backup entry goes, so a run stopped before the reload still reloads the proxy.
+		if ( ! $this->reload_proxy && 0 === strpos( $path, EE_ROOT_DIR . '/services/nginx-proxy/' ) ) {
+			$this->reload_proxy = true;
+			$this->saveState();
+		}
 		if ( null === $backup ) {
 			if ( file_exists( $path ) ) {
 				unlink( $path );
 			}
-		} elseif ( ! copy( $backup, $path ) ) {
-			throw new Exception( "Unable to restore $path from $backup." );
+		} else {
+			// A recreated file (e.g. a deleted private key) is never readable by others, even briefly.
+			$umask  = umask( 0077 );
+			$copied = copy( $backup, $path );
+			umask( $umask );
+			if ( ! $copied || ! chmod( $path, fileperms( $backup ) & 0777 ) ) {
+				throw new Exception( "Unable to restore $path from $backup." );
+			}
 		}
 		unset( $this->file_backups[ $path ] );
 		// Journal first: a run killed in between replays the restore instead of missing the backup.
@@ -1246,11 +1258,6 @@ class FeatureContext implements Context
 
 	private function restoreBackedUpFiles() {
 		foreach ( array_reverse( array_keys( $this->file_backups ) ) as $path ) {
-			// Journaled before the backup entries go, so a failed reload is retried by the next run.
-			if ( ! $this->reload_proxy && 0 === strpos( $path, EE_ROOT_DIR . '/services/nginx-proxy/' ) ) {
-				$this->reload_proxy = true;
-				$this->saveState();
-			}
 			$this->iRestoreTheFile( $path );
 		}
 		$this->saved_checksums   = [];
